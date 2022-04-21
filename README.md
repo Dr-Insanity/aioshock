@@ -4,7 +4,7 @@ AIOSHOCK
 An **Asynchronous** version of Python REST API wrapper for the [TShock](https://tshock.co/xf/) RESTful API exposed by [TShock](https://tshock.co/xf/) servers for Terraria.
 There are no docs for this yet. However, pretty much all functions have to be awaited. I chose not to preserve old syntax. `get_` --> `fetch_`.
 
-There's no PIP for this library.
+There's no PIP for this module.
 
 
 TShock
