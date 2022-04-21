@@ -1,27 +1,27 @@
-import requests as req
-from pyshock.exceptions import ApiException
-from pyshock.enums import UserLookupType, BanLookupType
+import aiohttp
+from aioshock.exceptions import ApiException
+from aioshock.enums import UserLookupType, BanLookupType
 from urllib.parse import urljoin, urlencode
 
 class TShock():
-    """The main API wrapper. This class handles all requests.
+    """The main API wrapper. This class handles all async requests.
     The functions in this class document what endpoint they belong to
     and have names that describe their functions.
-
-    All of the functions beginning with ``get_`` do not edit any server values.
-    ``get_`` functions simply query the TShock server using any of the REST endpoints
+    \n
+    All of the functions beginning with ``fetch_`` do not edit any server values.
+    ``fetch_`` functions simply query the TShock server using any of the REST endpoints
     that do not update, create, or delete data. An example is returning a list of players.
-    Of CRUD, ``get_`` covers Read.
-
+    Of CRUD, ``fetch_`` covers Read.
+    \n
     All of the functions beginning with ``set_`` will edit some sort of value on the server's end.
     ``set_`` functions are used to update, create, or delete data. An example is banning a player.
     Of CRUD, ``set_`` covers Update.
-
+    \n
     All of the functions beginning with ``do_`` will perform some sort of action that
     will edit the TShock server's state somehow, but will not cause permanent changes.
     These are typically actions taken somehow. An example is butchering all NPCs.
     Of CRUD, ``do_`` covers Create and Delete.
-
+    \n
     All of the functions will return a dict. The dict is a mapping of the JSON data
     returned by the TShock server as a REST response. Every response will contain the
     ``status`` member. The ``status`` member is the HTTP status code that the TShock server
@@ -29,28 +29,28 @@ class TShock():
     be thrown as ApiExceptions. Most of the mappings returned will have a ``response``
     member. This indicates success or failure and the best way to find out what
     the mapping will contain would be to consult the REST API source or documentation.
-
-    After instantiation, the :py:meth:`get_token` function should be run to obtain a token
+    \n
+    After instantiation, the :py:meth:`fetch_token` function should be run to obtain a token
     corresponding to a specific user. All requests will pass the token. You cannot
     make most requests without a token.
-
+    \n
     Your user is required to have the appropriate permission assigned to them by the TShock
     server for some requests. These permissions are not documented here and may be found in the
     TShock RESTful API documenation:
     https://tshock.atlassian.net/wiki/display/TSHOCKPLUGINS/REST+API+Endpoints#RESTAPIEndpoints-/v2/users/activelist
-
+    \n
     Example usage of the API:
-
-    >>> tshock = pyshock.TShock()
-    >>> tshock.get_token("Ijwu","test")
-    >>> tshock.get_active_user_list()
-    {'status': '200', 'activeusers': 'Ijwu'}
-
-    :param str ip:
-        the ip address of the TShock server
-
-    :param int port:
-        the port that the REST API is opened on
+    \n
+    >>> aioshock = aioshock.TShock()
+    >>> await aioshock.fetch_token("Dr-Insanity","test")
+    >>> await aioshock.fetch_active_user_list()
+    {'status': '200', 'activeusers': 'Dr-Insanity'}
+    \n
+    ip `str`
+    - the ip address of the TShock server
+    \n
+    port `int`
+    - the port that the REST API is opened on
     """
     def __init__(self, ip, port):
         self.urls = RequestBuilder(ip, port)
@@ -58,7 +58,7 @@ class TShock():
         self.port = port
         self.token = ""
 
-    def _make_request(self, url : str) -> dict:
+    async def _make_request(self, url : str) -> dict:
         """Makes a GET request to the specified url.
         Takes care of checking the response status as well
         as handling all possible connection errors.
@@ -75,23 +75,34 @@ class TShock():
         :raises ApiException:
             If the request times out or the REST response returns a status other than 200 or 400.
         """
-        try:
-            res = req.get(url)
-        except Exception:
-            raise ApiException("An error occurred in making the request to the server.")
-        results = res.json()
-        if results['status'] == "404":
-            raise ApiException("404 Error. Are you sure the server has REST enabled?")
-        elif results['status'] in ["200", "400"]:
-            pass
-        else:
-            raise ApiException("Error in request. Server returned status: {0} With error: {1}".format(
-                results["status"],
-                results["error"]
-            ))
-        return results
+        HEADERS = {
+            'User-Agent' : "Pandora's Guard"
+        }
+        json_outp = []
+        async with aiohttp.request("GET", url, headers=HEADERS) as response:
+            if response.status == 200:
+                results = await response.json()
+                #print(results)
+                text_data = await response.text()
+                #print(text_data)
+                json_outp.append(results)
 
-    def get_token(self, user : str, password : str):
+            elif response.status == 404:
+                raise ApiException("404 Error. Are you sure the server has REST enabled?")
+            elif response.status == 403:
+
+                raise ApiException("403 Error. Was the token and/or user details changed?")
+            elif response.status in [200, 400]:
+                pass
+            else:
+                raise ApiException("Error in request. Server returned status: {0} With error: {1}".format(
+                    response.status,
+                    json_outp[0]["error"]
+            ))
+            data = json_outp[0]
+            return data
+
+    async def fetch_token(self, user : str, password : str):
         """Gets and stores a token for the user.
         The token is used for all rest endpoints that require authentication.
         The token may be overridden by running this function again.
@@ -104,11 +115,12 @@ class TShock():
 
         **endpoint:** v2/token/create/
         """
-        self.urls.token = self._make_request(
-            self.urls.get_url("v2", "token", "create", password, username=user)
-        )["token"]
+        url = self.urls.get_url("v2", "token", "create", username=user, password=password)
+        data = await self._make_request(url)
+        data = data["token"]
+        self.urls.token = data
 
-    def get_status(self) -> dict:
+    async def fetch_status(self) -> dict:
         """Gets the server status.
 
         :returns:
@@ -120,9 +132,10 @@ class TShock():
 
         **endpoint:** /status
         """
-        return self._make_request(self.urls.get_url("status"))
+        data = await self._make_request(self.urls.get_url("status"))
+        return data
 
-    def get_token_status(self) -> bool:
+    async def fetch_token_status(self) -> bool:
         """Tests if the the currently saved token is still valid.
 
         :returns:
@@ -131,12 +144,12 @@ class TShock():
         **endpoint:** /tokentest
         """
         try:
-            self._make_request(self.urls.get_url("tokentest"))
+            data = await self._make_request(self.urls.get_url("tokentest"))
+            return True
         except ApiException:
             return False
-        return True
 
-    def get_server_status_v2(self, players=False, rules=False, filters=None) -> dict:
+    async def fetch_server_status_v2(self, players=False, rules=False, filters=None) -> dict:
         """Gets the server status. Includes various items based
         on the parameters sent.
 
@@ -176,9 +189,10 @@ class TShock():
         """
         if filters is None:
             filters = {}
-        return self._make_request(self.urls.get_url("v2", "server", "status", players=players, rules=rules, **filters))
+        data = await self._make_request(self.urls.get_url("v2", "server", "status", players=players, rules=rules, **filters))
+        return data
 
-    def get_active_user_list(self):
+    async def fetch_active_user_list(self):
         """Gets the currently active players logged into a server.
 
         :returns:
@@ -187,9 +201,9 @@ class TShock():
 
         **endpoint:** /v2/users/activelist
         """
-        return self._make_request(self.urls.get_url("v2", "users", "activelist"))
-
-    def get_user_info(self, lookup : UserLookupType, user : str):
+        data = await self._make_request(self.urls.get_url("v2", "users", "activelist"))
+        return data
+    async def fetch_user_info(self, lookup : UserLookupType, user : str):
         """Gets information about a specific user.
 
         :param UserLookupType lookup:
@@ -209,9 +223,10 @@ class TShock():
 
         **endpoint:** /v2/users/read
         """
-        return self._make_request(self.urls.get_url("v2", "users", "read", type=lookup.value, user=user))
+        data = await self._make_request(self.urls.get_url("v2", "users", "read", type=lookup.value, user=user))
+        return data
 
-    def get_ban_information(self, lookup : BanLookupType, user : str) -> dict:
+    async def fetch_ban_information(self, lookup : BanLookupType, user : str) -> dict:
         """Gets information about a ban.
 
         :param BanLookupType lookup:
@@ -229,9 +244,10 @@ class TShock():
 
         **endpoint:** /v2/bans/read
         """
-        return self._make_request(self.urls.get_url("v2", "bans", "read", type=lookup.value, ban=user))
+        data = await self._make_request(self.urls.get_url("v2", "bans", "read", type=lookup.value, ban=user))
+        return data
 
-    def get_ban_list(self):
+    async def fetch_ban_list(self):
         """Gets a list of all of the bans on the server.
 
         :returns:
@@ -243,9 +259,10 @@ class TShock():
 
         **endpoint:** /v2/bans/list
         """
-        return self._make_request(self.urls.get_url("v2", "bans", "list"))
+        data = await self._make_request(self.urls.get_url("v2", "bans", "list"))
+        return data
 
-    def get_player_list(self):
+    async def fetch_player_list(self):
         """Gets a list of all of the players currently on the server.
 
         :returns:
@@ -254,9 +271,31 @@ class TShock():
 
         **endpoint:** /v2/players/list
         """
-        return self._make_request(self.urls.get_url("v2", "players", "list"))
-
-    def get_player_info(self, player : str):
+        data = await self._make_request(self.urls.get_url("v2", "players", "list"))
+        return data
+    
+    async def fetch_player_info(self, player : str):
+        """Gets information about a specific player.
+        :param str player:
+            The player to look for, by name.
+        :returns:
+            A dict with these items:
+                * nickname - The player's nickname
+                * username - The player's username (if they are registered)
+                * ip - The player's IP address
+                * group - The group that the player belongs to
+                * register - time whene he register
+                * position - The player's current position on the map
+                * inventory - A list of all items in the player's inventory
+                * armor - his armor
+                * dyes - player`s item in dyes slot
+                * buffs - A list of all buffs that are currently affecting the player
+        **endpoint:** /v2/players/read
+        """
+        data = await self._make_request(self.urls.get_url("players", "read", player=player))
+        return data
+    
+    async def fetch_player_info_v4(self, player : str):
         """Gets information about a specific player.
 
         :param str player:
@@ -268,15 +307,25 @@ class TShock():
                 * username - The player's username (if they are registered)
                 * ip - The player's IP address
                 * group - The group that the player belongs to
+                * register - time whene he register
+                * muted - if player muted
                 * position - The player's current position on the map
                 * inventory - A list of all items in the player's inventory
+                * item - player`s item
+                    * inventory - player`s item in inventory
+                    * equipment - player`s equipment
+                    * dyes - player`s item in dyes slot
+                    * piggy - player`s item in piggy
+                    * safe -  player`s item in safe
+                    * forge - player`s item in forge 
                 * buffs - A list of all buffs that are currently affecting the player
 
-        **endpoint:** /v2/players/read
+        **endpoint:** /v4/players/read
         """
-        return self._make_request(self.urls.get_url("v2", "players", "read", player=player))
+        data = await self._make_request(self.urls.get_url("v4", "players", "read", player=player))
+        return data
 
-    def get_world_info(self):
+    async def fetch_world_info(self):
         """Gets some information about the current world.
 
         :returns:
@@ -290,9 +339,10 @@ class TShock():
 
         **endpoint:** /world/read
         """
-        return self._make_request(self.urls.get_url("world", "read"))
+        data = await self._make_request(self.urls.get_url("world", "read"))
+        return data
 
-    def get_group_list(self):
+    async def fetch_group_list(self):
         """Returns a list of all of the groups on the server.
 
         :returns:
@@ -304,9 +354,9 @@ class TShock():
 
         **endpoint:** /v2/groups/list
         """
-        return self._make_request(self.urls.get_url("v2", "groups", "list"))
-
-    def get_group_info(self, group : str):
+        data = await self._make_request(self.urls.get_url("v2", "groups", "list"))
+        return data
+    async def fetch_group_info(self, group : str):
         """Returns info about a specific group.
 
         :param str group:
@@ -324,9 +374,10 @@ class TShock():
 
         **endpoint:** /v2/groups/read
         """
-        return self._make_request(self.urls.get_url("v2", "groups", "read", group=group))
+        data = await self._make_request(self.urls.get_url("v2", "groups", "read", group=group))
+        return data
 
-    def get_server_motd(self):
+    async def fetch_server_motd(self):
         """Gets the server's MOTD.
 
         :returns:
@@ -335,9 +386,10 @@ class TShock():
 
         **endpoint:** /v3/server/motd
         """
-        return self._make_request(self.urls.get_url("v3", "server", "motd"))
+        data = await self._make_request(self.urls.get_url("v3", "server", "motd"))
+        return data
 
-    def get_server_rules(self):
+    async def fetch_server_rules(self):
         """Gets the server's rules.
 
         :returns:
@@ -346,23 +398,24 @@ class TShock():
 
         **endpoint:** /v3/server/rules
         """
-        return self._make_request(self.urls.get_url("v3", "server", "rules"))
+        data = await self._make_request(self.urls.get_url("v3", "server", "rules"))
+        return data
 
-    def do_destroy_token(self):
+    async def do_destroy_token(self):
         """Destroys the token being used by this class.
 
         **endpoint:** /token/destroy
         """
-        self._make_request(self.urls.get_url("token", "destroy", self.urls.token))
+        await self._make_request(self.urls.get_url("token", "destroy", self.urls.token))
 
-    def do_destroy_all_tokens(self):
+    async def do_destroy_all_tokens(self):
         """Destroys all tokens registered with the server.
 
         **endpoint:** /v3/token/destroy/all
         """
-        self._make_request(self.urls.get_url("v3", "token", "destroy", "all"))
+        await self._make_request(self.urls.get_url("v3", "token", "destroy", "all"))
 
-    def do_server_broadcast(self, message : str):
+    async def do_server_broadcast(self, message : str):
         """Broadcasts a message to all users on the server.
 
         :param str message:
@@ -370,44 +423,38 @@ class TShock():
 
         **endpoint:** /v2/server/broadcast
         """
-        self._make_request(self.urls.get_url("v2", "server", "broadcast", msg=message))
+        await self._make_request(self.urls.get_url("v2", "server", "broadcast", msg=message))
 
-    def do_server_reload(self):
+    async def do_server_reload(self):
         """Reloads the config file, permissions, and regions of the server.
 
         **endpoint:** /v3/server/reload
         """
-        self._make_request(self.urls.get_url("v3", "server", "reload"))
+        await self._make_request(self.urls.get_url("v3", "server", "reload"))
 
-    def do_server_off(self):
+    async def do_server_off(self, confirm: bool = True, nosave: bool = False):
         """Shuts down the server.
 
+        :param bool confirm:
+            Do you realy want do off server?
+            Usually True
+
+        :param bool nosave:
+            Off server without save or not?
+            Usually False
+            
         **endpoint:** /v2/server/off
         """
-        self._make_request(self.urls.get_url("v2", "server", "off"))
+        await self._make_request(self.urls.get_url("v2", "server", "off", confirm=confirm, nosave=nosave))
 
-    def do_server_restart(self):
+    async def do_server_restart(self):
         """Restarts the server.
 
         **endpoint:** /v3/server/restart
         """
-        self._make_request(self.urls.get_url("v3", "server", "restart"))
+        await self._make_request(self.urls.get_url("v3", "server", "restart"))
 
-    def do_server_rawcmd_v2(self, command : str):
-        """Executes a command on the server and returns the output.
-
-        :param str command:
-            The command to be executed.
-
-        :returns:
-            A dict with these items:
-                * response - The output of the command as a string. Each line of output is separated by a newline.
-
-        **endpoint:** /v2/server/rawcmd
-        """
-        return self._make_request(self.urls.get_url("v2", "server", "rawcmd", cmd=command))
-
-    def do_server_rawcmd_v3(self, command : str):
+    async def do_server_rawcmd(self, command : str):
         """Executes a command on the server and returns the output.
 
         :param str command:
@@ -419,9 +466,10 @@ class TShock():
 
         **endpoint:** /v3/server/rawcmd
         """
-        return self._make_request(self.urls.get_url("v3", "server", "rawcmd", cmd=command))
+        data = await self._make_request(self.urls.get_url("v3", "server", "rawcmd", cmd=command))
+        return data
 
-    def do_create_ban(self, ip : str, name : str, reason : str):
+    async def do_create_ban(self, ip : str, name : str, reason : str):
         """Bans a user.
 
         :param str ip:
@@ -435,9 +483,9 @@ class TShock():
 
         **endpoint:** /bans/create
         """
-        self._make_request(self.urls.get_url("bans", "create", ip=ip, name=name, reason=reason))
+        await self._make_request(self.urls.get_url("bans", "create", ip=ip, name=name, reason=reason))
 
-    def do_delete_ban(self, type : BanLookupType, ban : str):
+    async def do_delete_ban(self, type : BanLookupType, ban : str):
         """Deletes a ban.
 
         :param BanLookupType type:
@@ -448,23 +496,23 @@ class TShock():
 
         **endpoint:** /v2/bans/destroy
         """
-        self._make_request(self.urls.get_url("v2", "bans", "destroy", ban=ban, type=type))
+        await self._make_request(self.urls.get_url("v2", "bans", "destroy", ban=ban, type=type))
 
-    def do_world_meteor(self):
+    async def do_world_meteor(self):
         """Drops a meteor on the world.
 
         **endpoint:** /world/meteor
         """
-        self._make_request(self.urls.get_url("world", "meteor"))
+        await self._make_request(self.urls.get_url("world", "meteor"))
 
-    def do_world_save(self):
+    async def do_world_save(self):
         """Saves the world. (No, not like Superman.)
 
         **endpoint:** /v2/world/save
         """
-        self._make_request(self.urls.get_url("v2", "world", "save"))
+        await self._make_request(self.urls.get_url("v2", "world", "save"))
 
-    def do_world_butcher(self, killFriendly : bool):
+    async def do_world_butcher(self, killFriendly : bool):
         """Butchers all NPCs. Will never kill town NPCs, even if killFriendly
         is enabled.
 
@@ -473,9 +521,9 @@ class TShock():
 
         **endpoint:** /v2/world/butcher
         """
-        self._make_request(self.urls.get_url("v2", "world", "butcher", killfriendly=killFriendly))
+        await self._make_request(self.urls.get_url("v2", "world", "butcher", killfriendly=killFriendly))
 
-    def do_kick_player(self, player : str, reason : str):
+    async def do_kick_player(self, player : str, reason : str):
         """Kicks a player.
 
         :param str reason:
@@ -483,9 +531,9 @@ class TShock():
 
         **endpoint:** /v2/players/kick
         """
-        self._make_request(self.urls.get_url("v2", "players", "kick", reason=reason, player=player))
+        await self._make_request(self.urls.get_url("v2", "players", "kick", reason=reason, player=player))
 
-    def do_ban_player(self, player : str, reason : str):
+    async def do_ban_player(self, player : str, reason : str):
         """Bans a player permanently.
 
         :param str player:
@@ -496,9 +544,9 @@ class TShock():
 
         **endpoint:** /v2/players/ban
         """
-        self._make_request(self.urls.get_url("v2", "players", "ban", reason=reason, player=player))
+        await self._make_request(self.urls.get_url("v2", "players", "ban", reason=reason, player=player))
 
-    def do_kill_player(self, player : str, killer : str):
+    async def do_kill_player(self, player : str, killer : str):
         """Kills a player.
 
         :param player:
@@ -510,9 +558,9 @@ class TShock():
 
         **endpoint:** /v2/players/kill
         """
-        self._make_request(self.urls.get_url("v2", "players", "kill", player=player, **{"from":killer}))
+        await self._make_request(self.urls.get_url("v2", "players", "kill", player=player, **{"from":killer}))
 
-    def do_mute_player(self, player : str):
+    async def do_mute_player(self, player : str):
         """Mutes a player.
 
         :param str player:
@@ -520,9 +568,9 @@ class TShock():
 
         **endpoint:** /v2/players/mute
         """
-        self._make_request(self.urls.get_url("v2", "players", "mute", player=player))
+        await self._make_request(self.urls.get_url("v2", "players", "mute", player=player))
 
-    def do_unmute_player(self, player : str):
+    async def do_unmute_player(self, player : str):
         """Unmutes a player.
 
         :param str player:
@@ -530,9 +578,9 @@ class TShock():
 
         **endpoint:** /v2/players/unmute
         """
-        self._make_request(self.urls.get_url("v2", "players", "unmute", player=player))
+        await self._make_request(self.urls.get_url("v2", "players", "unmute", player=player))
 
-    def do_group_delete(self, group : str):
+    async def do_group_delete(self, group : str):
         """Deletes a group.
 
         :param str group:
@@ -540,9 +588,9 @@ class TShock():
 
         **endpoint:** /v2/groups/destroy
         """
-        self._make_request(self.urls.get_url("v2", "groups", "destroy", group=group))
+        await self._make_request(self.urls.get_url("v2", "groups", "destroy", group=group))
 
-    def do_group_create(self, group : str, parent : str = "", permissions : str = "", chatColor : str = "255,255,255"):
+    async def do_group_create(self, group : str, parent : str = "", permissions : str = "", chatColor : str = "255,255,255"):
         """Adds a new group. Includes specification of parent, permissions, and chat color.
 
         :param str group:
@@ -559,13 +607,32 @@ class TShock():
 
         **endpoint:** /v2/groups/create
         """
-        self._make_request(self.urls.get_url("v2", "groups", "create",
+        await self._make_request(self.urls.get_url("v2", "groups", "create",
                                              group=group,
                                              parent=parent,
                                              permissions=permissions,
                                              chatcolor=chatColor))
 
-    def set_update_user(self, user : str, type : UserLookupType, password : str, group : str):
+    async def do_create_user(self, lookup: UserLookupType, user : str, password: str, group: str):
+        """Create user.
+
+        :param UserLookupType type:
+            The method in which to lookup the user.
+
+        :param user str:
+            Name of user you want to create
+
+        :param password str:
+            Password of user you want to create
+
+        :param group str:
+            Group of user you want to create        
+
+        **endpoint:** /v2/users/create
+        """
+        await self._make_request(self.urls.get_url("v2", "users", "create", type=lookup.value, user=user, password=password, group=group))
+        
+    async def set_update_user(self, user : str, type : UserLookupType, password : str, group : str):
         """Updates a user in the TShock DB.
 
         :param str user:
@@ -582,13 +649,13 @@ class TShock():
 
         **endpoint:** /v2/users/update
         """
-        self._make_request(self.urls.get_url("v2", "users", "update",
+        await self._make_request(self.urls.get_url("v2", "users", "update",
                                              user=user,
                                              type=type.value,
                                              password=password,
                                              group=group))
 
-    def set_world_bloodmoon(self, bloodmoon : bool):
+    async def set_world_bloodmoon(self, bloodmoon : bool):
         """Sets the world's bloodmoon.
 
         :param bool bloodmoon:
@@ -596,9 +663,9 @@ class TShock():
 
         **endpoint:** /world/bloodmoon/{bool}
         """
-        self._make_request(self.urls.get_url("world", "bloodmoon", bloodmoon))
+        await self._make_request(self.urls.get_url("world", "bloodmoon", bloodmoon))
 
-    def set_world_autosaving(self, autosave : bool):
+    async def set_world_autosaving(self, autosave : bool):
         """Turns autosaving on or off.
 
         :param bool autosave:
@@ -606,9 +673,9 @@ class TShock():
 
         **endpoint:** /v2/world/autosave/state/{bool}
         """
-        self._make_request(self.urls.get_url("v2", "world", "autosave", "state", autosave))
+        await self._make_request(self.urls.get_url("v2", "world", "autosave", "state", autosave))
 
-    def set_group_update(self, group : str, parent : str = None, chatcolor : str = None, permissions : str = None):
+    async def set_group_update(self, group : str, parent : str = None, chatcolor : str = None, permissions : str = None):
         """Updates a group in the TShock DB.
 
         :param str group:
@@ -631,7 +698,7 @@ class TShock():
             chatcolor = ""
         if permissions is None:
             permissions = ""
-        self._make_request(self.urls.get_url("v2", "groups", "update",
+        await self._make_request(self.urls.get_url("v2", "groups", "update",
                                              group=group,
                                              parent=parent,
                                              chatcolor=chatcolor,
