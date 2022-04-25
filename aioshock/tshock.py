@@ -230,17 +230,10 @@ class TShock():
         """Sets the group for specific user.
 
         ## user
-        - String that is either the user name, id, or ip, depending on the
-        - lookup type.
+        - The username of the user to change the group for
 
         ## returns:
-        A dict with these items
-        - group - The group the user belong's to
-        - id - The user's ID
-        - name - The name of the user
-        - ip - The ip of the user
-
-        **endpoint:** /v2/users/read
+        - Dict
         """
         data = await self.do_server_rawcmd(f"/user group {user} {newgroup}")
         return data
